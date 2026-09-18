@@ -34,6 +34,9 @@ def display_images(images):
     plt.tight_layout()
     plt.show()
 
+"""
+Returns an array of images with their features detected
+"""
 def step1(path_array):
     processed_images = []
     
@@ -75,6 +78,9 @@ def step1(path_array):
         
     return processed_images
 
+"""
+Takes two images and roughly stitches them together by detecting where there features match
+"""
 def step2(img1_dict, img2_dict):
     
     img1_pts = []
@@ -111,27 +117,29 @@ def step2(img1_dict, img2_dict):
     homography_matrix, mask = cv2.findHomography(pts2_np, pts1_np, cv2.RANSAC, 5.0)
     
     # Set new image width
-    img1_height, img1_width = img1_dict['clean_rgb'].shape[:2]
-    new_width = img1_width * 2  
-
-    panorama = cv2.warpPerspective(img2_dict['clean_rgb'], homography_matrix, (new_width, img1_height))
+    h1, w1 = img1_dict['clean_rgb'].shape[:2]
+    h2, w2 = img2_dict['clean_rgb'].shape[:2]    
+    new_width = w1 + w2
+    new_height = max(h1, h2)
     
-    # Overlay img2 onto the left side of the canvas
-    panorama[0:img1_height, 0:img1_width] = img1_dict['clean_rgb']
+    # Warp img1 onto img2
+    img2_warped = cv2.warpPerspective(img2_dict['clean_rgb'], homography_matrix, (new_width, new_height))
     
-    return panorama
+    result = img2_warped.copy()
+    result[0:h1, 0:w1] = img1_dict['clean_rgb']
+    
+    return result
 
-
-step1_images = step1(yosemite_image_paths)
+post_step1_images = step1(yosemite_image_paths)
 
 ## Display original Images
 # display_images(yosemite_image_paths)
 ## Display images after applying SIFT in Step 1
-# display_images(step1_images)
+# display_images(post_step1_images)
 
-step2_image1 = step1_images[0]
-step2_image2 = step1_images[1]
+stitched_image_group1 = step2(post_step1_images[0], post_step1_images[1])
+stitched_image_group2 = step2(post_step1_images[2], post_step1_images[3])
 
-step2_images = step2(step1_images[0], step1_images[1])
+display_images([stitched_image_group1])
+display_images([stitched_image_group2])
 
-display_images([step2_images])
