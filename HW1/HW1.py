@@ -34,10 +34,11 @@ def display_images(images):
     plt.tight_layout()
     plt.show()
 
-"""
-Returns an array of images with their features detected
-"""
+
 def step1(path_array):
+    """
+    Returns an array of images with their features detected
+    """
     processed_images = []
     
     # Using SIFT to detect features
@@ -78,10 +79,15 @@ def step1(path_array):
         
     return processed_images
 
-"""
-Takes two images and roughly stitches them together by detecting where there features match
-"""
+
 def step2(img1_dict, img2_dict):
+    """
+    Takes two images and roughly stitches them together by detecting where there features match
+
+    Originally, step2 hard-pasted img1 directly over warped img2 into a single result image, 
+    which lost the individual image boundary data needed for blending. It now returns two separate, 
+    identical-sized canvases (canvas1 and canvas2) so step3 can compute independent distance weights and create a seamless overlap.
+    """
     
     img1_pts = []
     img2_pts = []
@@ -123,12 +129,14 @@ def step2(img1_dict, img2_dict):
     new_height = max(h1, h2)
     
     # Warp img1 onto img2
-    img2_warped = cv2.warpPerspective(img2_dict['clean_rgb'], homography_matrix, (new_width, new_height))
+    canvas_img1 = np.zeros((new_height, new_width, 3), dtype=np.uint8)
+    canvas_img1[0:h1, 0:w1] = img1_dict['clean_rgb']
     
-    result = img2_warped.copy()
-    result[0:h1, 0:w1] = img1_dict['clean_rgb']
-    
-    return result
+    # Warp img2 onto its own canvas of size (new_height, new_width)
+    canvas_img2 = cv2.warpPerspective(img2_dict['clean_rgb'], homography_matrix, (new_width, new_height))
+        
+    # MODIFIED: Returned both separate canvases so step3 can compute distance transform weight maps
+    return canvas_img1, canvas_img2
 
 post_step1_images = step1(yosemite_image_paths)
 
@@ -137,9 +145,50 @@ post_step1_images = step1(yosemite_image_paths)
 ## Display images after applying SIFT in Step 1
 # display_images(post_step1_images)
 
-stitched_image_group1 = step2(post_step1_images[0], post_step1_images[1])
-stitched_image_group2 = step2(post_step1_images[2], post_step1_images[3])
+post_step2_canvas1, post_step2_canvas2 = step2(post_step1_images[0], post_step1_images[1])
 
-display_images([stitched_image_group1])
-display_images([stitched_image_group2])
+display_images([post_step2_canvas1])
+display_images([post_step2_canvas2])
 
+def step3(base_canvas, warped_canvas):
+    """
+    Blends two aligned canvases using distance transform weights to create a seamless stitch
+    """
+    def get_distance_transform(img_rgb):
+        thresh = cv2.threshold(img_rgb, 0, 255, cv2.THRESH_BINARY)[1]
+        thresh = thresh.any(axis=2)
+        thresh = np.pad(thresh, 1)
+        thresh = thresh.astype(np.uint8) * 255
+        
+        dist = cv2.distanceTransform(thresh, cv2.DIST_L2, 5)[1:-1, 1:-1]
+        dist = dist[:, :, None]
+        
+        max_val = dist.max()
+        if max_val == 0:
+            return dist
+        return dist / max_val * 255.0
+
+    # 1. Convert canvases to float32 for blending calculations
+    c1_f = base_canvas.astype(np.float32)
+    c2_f = warped_canvas.astype(np.float32)
+
+    # 2. Compute distance weight maps using the inner function
+    w1 = get_distance_transform(base_canvas)
+    w2 = get_distance_transform(warped_canvas)
+
+    # 3. Calculate total weight map and prevent division by zero
+    denom = np.maximum(w1 + w2, 1.0)
+
+    # 4. Blend using weighted average: (img1 * w1 + img2 * w2) / (w1 + w2)
+    blended = (c1_f * w1 + c2_f * w2) / denom
+
+    # 5. Clip pixel values to [0, 255] and return as uint8
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+blended_panorama = step3(post_step2_canvas1, post_step2_canvas2)
+display_images([blended_panorama])
+
+
+def final_panorama(image_array):
+    
+    
