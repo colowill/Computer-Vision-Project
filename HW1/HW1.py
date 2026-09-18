@@ -2,7 +2,6 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-## Setup & Constants ##
 PATH_PREFIX = 'HW1/images/'
 
 yosemite_image_paths = [
@@ -10,6 +9,13 @@ yosemite_image_paths = [
     f'{PATH_PREFIX}yosemite2.jpg',
     f'{PATH_PREFIX}yosemite3.jpg',
     f'{PATH_PREFIX}yosemite4.jpg'
+]
+
+forest_image_paths = [
+    f'{PATH_PREFIX}forest1.png',
+    f'{PATH_PREFIX}forest2.png',
+    f'{PATH_PREFIX}forest3.png',
+    f'{PATH_PREFIX}forest4.png'
 ]
 
 def display_images(images):
@@ -38,26 +44,30 @@ def display_images(images):
 def step1(path_array):
     """
     Returns an array of images with their features detected
+    Allows the input of filepaths, or actual CS2 image items
     """
     processed_images = []
     
     # Using SIFT to detect features
     sift = cv2.SIFT_create()
 
-    for path in path_array:
-        img = cv2.imread(path)
-        if img is None:
-            raise FileNotFoundError(path)
+    for image in path_array:
+        if isinstance(image, str):
+            img = cv2.imread(image)
+            if img is None:
+                raise FileNotFoundError(image)
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        else:
+            img_rgb = image
 
-        h, w = img.shape[:2]
-        aspect_ratio = w / h  # Corrected to width / height
+        h, w = img_rgb.shape[:2]
+        aspect_ratio = w / h 
         target_height = 480
         target_width = int(target_height * aspect_ratio)
 
         # Resizing Image
-        img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_AREA)
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)  # Corrected to BGR2GRAY
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_rgb = cv2.resize(img_rgb, (target_width, target_height), interpolation=cv2.INTER_AREA)
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
 
         keypoints, features = sift.detectAndCompute(img_gray, None)
 
@@ -143,15 +153,22 @@ def step3(base_canvas, warped_canvas):
     Blends two aligned canvases using distance transform weights to create a seamless stitch.
     """
     def get_distance_transform(img_rgb):
-        # Generate a binary mask of non-black pixels and pad borders so distance drops off at edge boundaries
-        thresh = cv2.threshold(img_rgb, 0, 255, cv2.THRESH_BINARY)[1]
-        thresh = thresh.any(axis=2)
-        thresh = np.pad(thresh, 1)
-        thresh = thresh.astype(np.uint8) * 255
+        # ERROR FIX: Disincluding black pixels from binary mask
+        nonblack_pxls = (img_rgb > 0).any(axis=2).astype(np.uint8) * 255
+        
+        # ERROR FIX: Erode the mask by 2 pixels to strip off dark/grey border pixels from interpolation
+        kernel = np.ones((3, 3), np.uint8)
+        eroded_mask = cv2.erode(nonblack_pxls, kernel, iterations=2)
+        
+        # Pad borders so distance drops off cleanly at valid image boundaries
+        padded = np.pad(eroded_mask, 1)
         
         # Calculate pixel distance to the nearest image boundary and normalize weights to [0, 255]
-        dist = cv2.distanceTransform(thresh, cv2.DIST_L2, 5)[1:-1, 1:-1]
+        dist = cv2.distanceTransform(padded, cv2.DIST_L2, 5)[1:-1, 1:-1]
         dist = dist[:, :, None]
+        
+        # ERROR FIX: Disincluding black and eroded border pixels in the image weight
+        dist[eroded_mask == 0] = 0
         
         max_val = dist.max()
         if max_val == 0:
@@ -181,9 +198,68 @@ post_step1_images = step1(yosemite_image_paths)
 
 post_step2_canvas1, post_step2_canvas2 = step2(post_step1_images[0], post_step1_images[1])
 
-display_images([post_step2_canvas1])
-display_images([post_step2_canvas2])
+#display_images([post_step2_canvas1])
+#display_images([post_step2_canvas2])
 
 blended_panorama = step3(post_step2_canvas1, post_step2_canvas2)
-display_images([blended_panorama])
+#display_images([blended_panorama])
 
+def create_panorama(image_path_array):
+    if len(image_path_array) != 4:
+        print("ERROR - Incorrect amount of images ")
+        return
+    
+    feature_detected_fourths = step1(image_path_array)
+    
+    canvas_thirds = [
+        step2(feature_detected_fourths[0], feature_detected_fourths[1]),
+        step2(feature_detected_fourths[1], feature_detected_fourths[2]),
+        step2(feature_detected_fourths[2], feature_detected_fourths[3])
+    ]
+    
+    stitched_thirds = [
+        step3(canvas_thirds[0][0], canvas_thirds[0][1]),
+        step3(canvas_thirds[1][0], canvas_thirds[1][1]),
+        step3(canvas_thirds[2][0], canvas_thirds[2][1])
+    ]
+    
+    #display_images([stitched_thirds[0]])
+    #display_images([stitched_thirds[1]])
+    #display_images([stitched_thirds[2]])
+    
+    feature_detected_thirds = step1(stitched_thirds)
+    
+    canvas_halves = [
+        step2(feature_detected_thirds[0], feature_detected_thirds[1]),
+        step2(feature_detected_thirds[1], feature_detected_thirds[2])
+    ]
+    
+    stitched_halves = [
+        step3(canvas_halves[0][0], canvas_halves[0][1]),
+        step3(canvas_halves[1][0], canvas_halves[1][1])
+    ]
+    
+    #display_images([stitched_halves[0]])
+    #display_images([stitched_halves[1]])
+
+    feature_detected_halves = step1(stitched_halves)
+    
+    final_canvas1, final_canvas2 = step2(
+        feature_detected_halves[0], 
+        feature_detected_halves[1]
+    )
+    
+    final_panorama = step3(final_canvas1, final_canvas2)
+    
+    final_panorama = step3(final_canvas1, final_canvas2)
+    
+    # Cropping out leftover image artifact
+    max_x = np.where((final_panorama > 0).any(axis=2))[1].max()
+    final_panorama = final_panorama[:, :max_x + 1]
+    
+    display_images([final_panorama])
+    
+    return final_panorama
+
+#create_panorama(yosemite_image_paths)
+create_panorama(forest_image_paths)
