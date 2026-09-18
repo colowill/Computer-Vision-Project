@@ -2,7 +2,7 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-## Step 1: Feature Detection ##
+## Setup & Constants ##
 PATH_PREFIX = 'HW1/images/'
 
 yosemite_image_paths = [
@@ -17,7 +17,7 @@ def display_images(images):
     if len(images) == 1:
         axes = [axes]
     for ax, item in zip(axes, images):
-        # Handle path strings
+        # Imread path strings
         if isinstance(item, str):
             img = cv2.imread(item)
             if img is None:
@@ -132,11 +132,45 @@ def step2(img1_dict, img2_dict):
     canvas_img1 = np.zeros((new_height, new_width, 3), dtype=np.uint8)
     canvas_img1[0:h1, 0:w1] = img1_dict['clean_rgb']
     
-    # Warp img2 onto its own canvas of size (new_height, new_width)
+    # Warp img2 onto its own canvas 
     canvas_img2 = cv2.warpPerspective(img2_dict['clean_rgb'], homography_matrix, (new_width, new_height))
         
-    # MODIFIED: Returned both separate canvases so step3 can compute distance transform weight maps
     return canvas_img1, canvas_img2
+
+
+def step3(base_canvas, warped_canvas):
+    """
+    Blends two aligned canvases using distance transform weights to create a seamless stitch.
+    """
+    def get_distance_transform(img_rgb):
+        # Generate a binary mask of non-black pixels and pad borders so distance drops off at edge boundaries
+        thresh = cv2.threshold(img_rgb, 0, 255, cv2.THRESH_BINARY)[1]
+        thresh = thresh.any(axis=2)
+        thresh = np.pad(thresh, 1)
+        thresh = thresh.astype(np.uint8) * 255
+        
+        # Calculate pixel distance to the nearest image boundary and normalize weights to [0, 255]
+        dist = cv2.distanceTransform(thresh, cv2.DIST_L2, 5)[1:-1, 1:-1]
+        dist = dist[:, :, None]
+        
+        max_val = dist.max()
+        if max_val == 0:
+            return dist
+        return dist / max_val * 255.0
+
+    # Convert image layers to float32 to prevent overflow during weighted arithmetic
+    c1_f = base_canvas.astype(np.float32)
+    c2_f = warped_canvas.astype(np.float32)
+
+    # Compute distance-based pixel importance maps for both aligned canvas layers
+    w1 = get_distance_transform(base_canvas)
+    w2 = get_distance_transform(warped_canvas)
+
+    # Compute normalized weighted average: (img1 * w1 + img2 * w2) / (w1 + w2)
+    denom = np.maximum(w1 + w2, 1.0)
+    blended = (c1_f * w1 + c2_f * w2) / denom
+
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 post_step1_images = step1(yosemite_image_paths)
 
@@ -150,45 +184,6 @@ post_step2_canvas1, post_step2_canvas2 = step2(post_step1_images[0], post_step1_
 display_images([post_step2_canvas1])
 display_images([post_step2_canvas2])
 
-def step3(base_canvas, warped_canvas):
-    """
-    Blends two aligned canvases using distance transform weights to create a seamless stitch
-    """
-    def get_distance_transform(img_rgb):
-        thresh = cv2.threshold(img_rgb, 0, 255, cv2.THRESH_BINARY)[1]
-        thresh = thresh.any(axis=2)
-        thresh = np.pad(thresh, 1)
-        thresh = thresh.astype(np.uint8) * 255
-        
-        dist = cv2.distanceTransform(thresh, cv2.DIST_L2, 5)[1:-1, 1:-1]
-        dist = dist[:, :, None]
-        
-        max_val = dist.max()
-        if max_val == 0:
-            return dist
-        return dist / max_val * 255.0
-
-    # 1. Convert canvases to float32 for blending calculations
-    c1_f = base_canvas.astype(np.float32)
-    c2_f = warped_canvas.astype(np.float32)
-
-    # 2. Compute distance weight maps using the inner function
-    w1 = get_distance_transform(base_canvas)
-    w2 = get_distance_transform(warped_canvas)
-
-    # 3. Calculate total weight map and prevent division by zero
-    denom = np.maximum(w1 + w2, 1.0)
-
-    # 4. Blend using weighted average: (img1 * w1 + img2 * w2) / (w1 + w2)
-    blended = (c1_f * w1 + c2_f * w2) / denom
-
-    # 5. Clip pixel values to [0, 255] and return as uint8
-    return np.clip(blended, 0, 255).astype(np.uint8)
-
 blended_panorama = step3(post_step2_canvas1, post_step2_canvas2)
 display_images([blended_panorama])
 
-
-def final_panorama(image_array):
-    
-    
